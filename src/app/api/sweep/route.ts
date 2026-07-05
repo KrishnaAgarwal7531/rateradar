@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runSweep, getState } from "@/lib/sweep";
+import { runSweepStreaming, getState } from "@/lib/sweep";
 import { dispatchSweepWorkflow } from "@/lib/github";
 
 export const maxDuration = 300;
@@ -25,6 +25,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...state, dispatched: true });
   }
 
-  const state = await runSweep();
+  const state = await runSweepStreaming(() => {});
   return NextResponse.json({ ...state, dispatched: false });
 }

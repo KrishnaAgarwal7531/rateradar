@@ -1,13 +1,17 @@
 // Runs INSIDE the GitHub Actions runner — this is the real compute, not
-// just a ping to Vercel. It calls runSweep() directly (real TinyFish
-// agent calls, batched 5-then-2) and writes straight to Redis, the same
-// database Vercel reads from on every request. Vercel's job is purely to
-// read what's already there — this script is what actually updates it.
-import { runSweep } from "../src/lib/sweep";
+// just a ping to Vercel. Uses the same progressive sweep as the
+// interactive "Sync now" button (runSweepStreaming) rather than the older
+// batch-only runSweep() — that one only wrote to Redis once, at the very
+// end of all 5 banks, so a page refresh mid-sweep showed nothing new even
+// after several banks had genuinely finished. This writes as each bank
+// resolves, same as everywhere else.
+import { runSweepStreaming } from "../src/lib/sweep";
 
 async function main() {
   console.log("[sweep-script] starting real sweep inside GitHub Actions runner...");
-  const state = await runSweep();
+  const state = await runSweepStreaming((event, data) => {
+    console.log(`[sweep-script] ${event}`, data);
+  });
   console.log(`[sweep-script] complete — ${state.listings.length} listings, live=${state.live}`);
 }
 
