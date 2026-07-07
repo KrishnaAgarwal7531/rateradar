@@ -30,16 +30,21 @@ export function Navbar({
   tab,
   onTabChange,
   syncing,
+  hasSyncedBefore,
   nextSweepAt,
   onSync
 }: {
   tab: NavTab;
   onTabChange: (t: NavTab) => void;
   syncing: boolean;
+  hasSyncedBefore: boolean;
   nextSweepAt: string | null;
   onSync: () => void;
 }) {
   const countdown = useCountdown(nextSweepAt);
+  const label = syncing ? "Syncing" : hasSyncedBefore ? "Synced" : "Not synced yet";
+  const dotColor = syncing ? "bg-amber live-dot" : hasSyncedBefore ? "bg-mint" : "bg-white/25";
+  const textColor = syncing ? "text-amber" : hasSyncedBefore ? "text-mint" : "text-muted";
 
   return (
     <header className="sticky top-0 z-10 bg-ink/95 backdrop-blur border-b border-line">
@@ -59,11 +64,9 @@ export function Navbar({
         </nav>
         <div className="flex items-center gap-4">
           <span className="text-[11px] text-muted hidden md:inline">Next sweep in {countdown}</span>
-          <span className={`text-[11px] font-medium flex items-center gap-1.5 ${syncing ? "text-amber" : "text-mint"}`}>
-            <span
-              className={`h-1.5 w-1.5 rounded-full inline-block ${syncing ? "bg-amber live-dot" : "bg-mint"}`}
-            />
-            {syncing ? "Syncing" : "Synced"}
+          <span className={`text-[11px] font-medium flex items-center gap-1.5 ${textColor}`}>
+            <span className={`h-1.5 w-1.5 rounded-full inline-block ${dotColor}`} />
+            {label}
           </span>
           <button
             onClick={onSync}

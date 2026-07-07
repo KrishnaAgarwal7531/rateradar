@@ -288,7 +288,14 @@ export default function Home() {
   return (
     <main className="min-h-screen">
       <Hero />
-      <Navbar tab={tab} onTabChange={setTab} syncing={isSyncing} nextSweepAt={state?.nextSweepAt ?? null} onSync={runSweepNow} />
+      <Navbar
+        tab={tab}
+        onTabChange={setTab}
+        syncing={isSyncing}
+        hasSyncedBefore={Boolean(state?.lastSweepAt)}
+        nextSweepAt={state?.nextSweepAt ?? null}
+        onSync={runSweepNow}
+      />
       <AnimatePresence>
         {refreshNote && (
           <motion.div
