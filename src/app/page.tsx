@@ -118,6 +118,7 @@ export default function Home() {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let wasSkipped = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -147,16 +148,32 @@ export default function Home() {
         } else if (event === "complete") {
           setState((prev) => (prev ? { ...prev, ...data } : { ...data, applications: [] }));
         } else if (event === "skipped") {
-          // another trigger already had the lock — just read whatever's current
+          // Another trigger (e.g. the scheduled GitHub Actions run) already
+          // holds the lock — this attempt correctly did nothing, but that's
+          // not the same as "finished." Read what's actually there and let
+          // the honest answer (sweepInProgress) decide what to say, instead
+          // of unconditionally claiming "synced" below.
+          wasSkipped = true;
           const res2 = await fetch("/api/state");
-          setState(await res2.json());
+          const fresh: FullState = await res2.json();
+          setState(fresh);
           setLoading(false);
         }
       }
     }
-    setRefreshNote("Rates synced.");
-    setSweeping(false);
-    setTimeout(() => setRefreshNote(null), 4000);
+
+    if (wasSkipped) {
+      setRefreshNote("Already syncing (started elsewhere) — watching for updates…");
+      // Deliberately don't clear sweeping here if a sweep is genuinely
+      // still running — isSyncing should keep reflecting reality via
+      // state.sweepInProgress until the passive poll sees it finish.
+      setSweeping(false);
+      setTimeout(() => setRefreshNote(null), 6000);
+    } else {
+      setRefreshNote("Rates synced.");
+      setSweeping(false);
+      setTimeout(() => setRefreshNote(null), 4000);
+    }
   }
 
   const fetchState = useCallback(async () => {
@@ -350,7 +367,7 @@ export default function Home() {
                 <h2 className="font-display text-lg font-semibold text-paper mb-3">Live sources</h2>
                 <SourcesStrip
                   listings={listingsForProduct}
-                  agentStates={isSyncing ? agentStates : state?.sweepInProgress ? polledAgentStates : undefined}
+                  agentStates={sweeping ? agentStates : state?.sweepInProgress ? polledAgentStates : undefined}
                 />
                 <p className="text-[11px] text-muted mt-3">
                   Click any bank on the left for full details — rate, minimum amount, and when it was last checked.
