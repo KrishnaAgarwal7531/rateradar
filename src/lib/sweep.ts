@@ -2,7 +2,6 @@ import { COMPETITOR_BANKS, OUR_BANK } from "./banks";
 import { PRODUCTS } from "./products";
 import { fetchBankRates } from "./rates";
 import { getInternalRates } from "./internal";
-import { runInBatches } from "./batch";
 import { storeGet, storeSet, acquireLock, releaseLock } from "./storage";
 import { getNextSweepAt } from "./schedule";
 import { getProfile } from "./profile";
@@ -40,8 +39,8 @@ async function autoApplyForBank(bank: Bank, listing: RateListing | undefined): P
 
 export async function getState(): Promise<SweepState> {
   const state = await storeGet<SweepState>(STATE_KEY);
-  if (state) return state;
-  return { listings: [], lastSweepAt: null, nextSweepAt: getNextSweepAt(), live: false, sweepInProgress: false };
+  if (state) return { ...state, agentStatuses: state.agentStatuses ?? {} };
+  return { listings: [], lastSweepAt: null, nextSweepAt: getNextSweepAt(), live: false, sweepInProgress: false, agentStatuses: {} };
 }
 
 export async function getApplications(): Promise<ApplicationDraft[]> {
@@ -67,54 +66,8 @@ function mergeListings(existing: RateListing[], incoming: RateListing[]): RateLi
   return Array.from(map.values());
 }
 
-// Our own rates (internal, never scraped) + competitor banks in parallel,
-// each read via one real-time TinyFish agent covering all 3 products in
-// a single pass. Used by the scheduled GitHub Actions path.
-export async function runSweep(): Promise<SweepState> {
-  if (!(await acquireLock(LOCK_KEY, LOCK_TTL_SECONDS))) {
-    console.log("[sweep] a sweep is already in progress — skipping duplicate trigger");
-    return getState();
-  }
-  try {
-    const nextSweepAt = getNextSweepAt();
-    const before = await getState();
-    await storeSet(STATE_KEY, { ...before, sweepInProgress: true, nextSweepAt });
-
-    console.log(`[sweep] starting — internal feed (1) + ${COMPETITOR_BANKS.length} banks, in batches of 5`);
-    const profile = await getProfile();
-    const ourListings = getInternalRates();
-    const autoApplyPromises: Promise<void>[] = [];
-    if (AUTO_APPLY_BANK_IDS.includes(OUR_BANK.id)) {
-      const listing = ourListings.find((l) => l.productId === profile.productId);
-      autoApplyPromises.push(autoApplyForBank(OUR_BANK, listing));
-    }
-    const results = await runInBatches(COMPETITOR_BANKS, (b) => fetchBankRates(b, PRODUCTS), 5);
-    for (const bank of COMPETITOR_BANKS) {
-      if (!AUTO_APPLY_BANK_IDS.includes(bank.id)) continue;
-      const bankIndex = COMPETITOR_BANKS.indexOf(bank);
-      const listing = results[bankIndex]?.listings.find((l) => l.productId === profile.productId);
-      autoApplyPromises.push(autoApplyForBank(bank, listing));
-    }
-    const listings = mergeListings(before.listings, [...ourListings, ...results.flatMap((r) => r.listings)]);
-    const live = results.some((r) => r.live);
-    await Promise.all(autoApplyPromises);
-
-    const state: SweepState = {
-      listings,
-      lastSweepAt: new Date().toISOString(),
-      nextSweepAt,
-      live,
-      sweepInProgress: false
-    };
-    await storeSet(STATE_KEY, state);
-    console.log(`[sweep] complete — ${listings.length} listings, live=${live}`);
-    return state;
-  } finally {
-    await releaseLock(LOCK_KEY);
-  }
-}
-
-// Same work as runSweep(), but emits a live event AND persists to storage
+// The single sweep implementation, used by every path — the GitHub
+// Actions script, the "Sync now" button, and the local dev fallback. There
 // as each individual bank finishes — not just when a whole batch-of-5
 // completes, and not just once at the very end. That persistence is what
 // lets a page refresh mid-sweep still show whatever's already been found,
@@ -140,7 +93,11 @@ export async function runSweepStreaming(
     const autoApplyPromises: Promise<void>[] = [];
 
     const ourListings = getInternalRates();
-    current = { ...current, listings: mergeListings(current.listings, ourListings) };
+    current = {
+      ...current,
+      listings: mergeListings(current.listings, ourListings),
+      agentStatuses: { ...current.agentStatuses, [OUR_BANK.id]: { status: "done", lastSyncedAt: new Date().toISOString() } }
+    };
     await storeSet(STATE_KEY, current);
     onEvent("bank_done", { bankId: OUR_BANK.id, bankName: OUR_BANK.name, listings: ourListings });
     if (AUTO_APPLY_BANK_IDS.includes(OUR_BANK.id)) {
@@ -159,7 +116,14 @@ export async function runSweepStreaming(
         batch.map(async (b) => {
           const r = await fetchBankRates(b, PRODUCTS);
           if (r.live) anyLive = true;
-          current = { ...current, listings: mergeListings(current.listings, r.listings) };
+          current = {
+            ...current,
+            listings: mergeListings(current.listings, r.listings),
+            agentStatuses: {
+              ...current.agentStatuses,
+              [b.id]: { status: r.live ? "done" : "error", lastSyncedAt: new Date().toISOString() }
+            }
+          };
           await storeSet(STATE_KEY, current);
           onEvent("bank_done", { bankId: b.id, bankName: b.name, listings: r.listings });
           // Fires the instant this bank's own rate is in — genuinely
@@ -179,7 +143,8 @@ export async function runSweepStreaming(
       lastSweepAt: new Date().toISOString(),
       nextSweepAt,
       live: anyLive,
-      sweepInProgress: false
+      sweepInProgress: false,
+      agentStatuses: current.agentStatuses
     };
     await storeSet(STATE_KEY, finalState);
     onEvent("complete", finalState);

@@ -19,12 +19,18 @@ export type RateListing = {
   checkedAt: string;
 };
 
+export type AgentStatus = {
+  status: "done" | "error";
+  lastSyncedAt: string;
+};
+
 export type SweepState = {
   listings: RateListing[];
   lastSweepAt: string | null;
   nextSweepAt: string;
   live: boolean;
   sweepInProgress: boolean;
+  agentStatuses: Record<string, AgentStatus>;
 };
 
 export type ApplicantProfile = {

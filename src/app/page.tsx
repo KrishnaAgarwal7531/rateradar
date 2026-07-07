@@ -90,6 +90,20 @@ export default function Home() {
   );
   const sweepTriggeredRef = useRef(false);
 
+  // Drives the same status dots as the SSE stream, but from plain polling —
+  // this is what lets a passive page view (someone who never clicked "Sync
+  // now" themselves, e.g. while GitHub Actions runs the daily sweep) still
+  // see per-bank progress, instead of only the person who triggered it.
+  const polledAgentStates = useMemo(() => {
+    if (!state) return undefined;
+    const map: Record<string, { name: string; state: AgentLiveState }> = {};
+    for (const bank of BANKS) {
+      const status = state.agentStatuses?.[bank.id];
+      map[bank.id] = { name: bank.name, state: status ? "done" : state.sweepInProgress ? "running" : "pending" };
+    }
+    return map;
+  }, [state]);
+
   async function runSweepNow() {
     if (sweeping) return; // never let two client-side triggers overlap either
     setSweeping(true);
@@ -127,7 +141,7 @@ export default function Home() {
           setState((prev) =>
             prev
               ? { ...prev, listings: mergeListings(prev.listings, data.listings) }
-              : { listings: data.listings, lastSweepAt: null, nextSweepAt: "", live: false, sweepInProgress: true, applications: [] }
+              : { listings: data.listings, lastSweepAt: null, nextSweepAt: "", live: false, sweepInProgress: true, agentStatuses: {}, applications: [] }
           );
           setLoading(false);
         } else if (event === "complete") {
@@ -167,9 +181,9 @@ export default function Home() {
 
   useEffect(() => {
     fetchState();
-    const interval = setInterval(fetchState, 30000);
+    const interval = setInterval(fetchState, state?.sweepInProgress ? 5000 : 30000);
     return () => clearInterval(interval);
-  }, [fetchState]);
+  }, [fetchState, state?.sweepInProgress]);
 
   // The 2 auto-apply agents save straight to the same application store —
   // this is what actually surfaces them here, instead of only ever seeing
@@ -334,7 +348,10 @@ export default function Home() {
 
               <div className="md:col-span-2">
                 <h2 className="font-display text-lg font-semibold text-paper mb-3">Live sources</h2>
-                <SourcesStrip listings={listingsForProduct} agentStates={isSyncing ? agentStates : undefined} />
+                <SourcesStrip
+                  listings={listingsForProduct}
+                  agentStates={isSyncing ? agentStates : state?.sweepInProgress ? polledAgentStates : undefined}
+                />
                 <p className="text-[11px] text-muted mt-3">
                   Click any bank on the left for full details — rate, minimum amount, and when it was last checked.
                 </p>
