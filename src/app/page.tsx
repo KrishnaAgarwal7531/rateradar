@@ -118,7 +118,8 @@ export default function Home() {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let wasSkipped = false;
+    let outcome: "completed" | "skipped" | "dispatched" | "error" = "completed";
+    let errorMessage = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -147,13 +148,26 @@ export default function Home() {
           setLoading(false);
         } else if (event === "complete") {
           setState((prev) => (prev ? { ...prev, ...data } : { ...data, applications: [] }));
+        } else if (event === "dispatched") {
+          // Running on Vercel — the real sweep now happens in GitHub
+          // Actions instead of inline here, so this connection is done
+          // the moment it's triggered. The already-built passive polling
+          // (state.sweepInProgress / agentStatuses) picks up progress from
+          // here, the same way it does for the scheduled daily run.
+          outcome = "dispatched";
+          const res2 = await fetch("/api/state");
+          setState(await res2.json());
+          setLoading(false);
+        } else if (event === "error") {
+          outcome = "error";
+          errorMessage = data.message ?? "Something went wrong.";
         } else if (event === "skipped") {
           // Another trigger (e.g. the scheduled GitHub Actions run) already
           // holds the lock — this attempt correctly did nothing, but that's
           // not the same as "finished." Read what's actually there and let
           // the honest answer (sweepInProgress) decide what to say, instead
           // of unconditionally claiming "synced" below.
-          wasSkipped = true;
+          outcome = "skipped";
           const res2 = await fetch("/api/state");
           const fresh: FullState = await res2.json();
           setState(fresh);
@@ -162,13 +176,21 @@ export default function Home() {
       }
     }
 
-    if (wasSkipped) {
+    if (outcome === "skipped") {
       setRefreshNote("Already syncing (started elsewhere) — watching for updates…");
-      // Deliberately don't clear sweeping here if a sweep is genuinely
-      // still running — isSyncing should keep reflecting reality via
-      // state.sweepInProgress until the passive poll sees it finish.
+      // Deliberately don't rely on the local sweeping flag alone — isSyncing
+      // should keep reflecting reality via state.sweepInProgress until the
+      // passive poll sees the real sweep finish.
       setSweeping(false);
       setTimeout(() => setRefreshNote(null), 6000);
+    } else if (outcome === "dispatched") {
+      setRefreshNote("Triggered — this can take a few minutes, updates will appear automatically.");
+      setSweeping(false);
+      setTimeout(() => setRefreshNote(null), 8000);
+    } else if (outcome === "error") {
+      setRefreshNote(`Couldn't sync: ${errorMessage}`);
+      setSweeping(false);
+      setTimeout(() => setRefreshNote(null), 8000);
     } else {
       setRefreshNote("Rates synced.");
       setSweeping(false);
@@ -365,10 +387,7 @@ export default function Home() {
 
               <div className="md:col-span-2">
                 <h2 className="font-display text-lg font-semibold text-paper mb-3">Live sources</h2>
-                <SourcesStrip
-                  listings={listingsForProduct}
-                  agentStates={sweeping ? agentStates : state?.sweepInProgress ? polledAgentStates : undefined}
-                />
+                <SourcesStrip listings={listingsForProduct} agentStates={sweeping ? agentStates : polledAgentStates} />
                 <p className="text-[11px] text-muted mt-3">
                   Click any bank on the left for full details — rate, minimum amount, and when it was last checked.
                 </p>
