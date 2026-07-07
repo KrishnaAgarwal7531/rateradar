@@ -15,7 +15,23 @@ async function getRedis() {
   // a stray newline in a pasted secret doesn't take the whole app down.
   const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
   const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
-  if (!url || !token) return null;
+  if (!url || !token) {
+    // Inside a GitHub Actions runner specifically, silently falling back
+    // to a local file is actively dangerous: the runner's filesystem is
+    // thrown away the instant the job ends, so the sweep would appear to
+    // complete successfully (correct data in the logs) while nothing was
+    // ever actually saved anywhere the deployed app can see. Fail loudly
+    // instead of failing silently.
+    if (process.env.GITHUB_ACTIONS === "true") {
+      throw new Error(
+        "UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN aren't set in this GitHub Actions run. " +
+          "Add them as repository secrets (Settings → Secrets and variables → Actions) with the exact " +
+          "same values as your Vercel project — without them, this sweep would silently write to a " +
+          "throwaway file on the runner instead of the real database, and Vercel would never see it."
+      );
+    }
+    return null;
+  }
   if (redisClient) return redisClient;
   const { Redis } = await import("@upstash/redis");
   redisClient = new Redis({ url, token }) as unknown as typeof redisClient extends null ? never : NonNullable<typeof redisClient>;
